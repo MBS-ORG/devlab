@@ -1,0 +1,31 @@
+# VS Code settings
+.vscode/
+
+# BC compiler cache
+.alcache/
+
+# Downloaded symbols
+.alpackages/
+
+# Snapshot files
+.snapshots/
+
+# Compiled output
+.output/
+*.app
+
+# Rapid Application Development
+rad.json
+
+# Auto-generated translation base files
+*.g.xlf
+
+# License files
+*.flf
+
+# Test results
+TestResults.xml
+
+# OS
+.DS_Store
+Thumbs.db
