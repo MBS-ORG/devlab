@@ -1,0 +1,70 @@
+name: AL Build and Test
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - "**.al"
+      - "app.json"
+      - ".github/workflows/al-build-and-test.yml"
+  pull_request:
+    branches: [main, master]
+
+env:
+  BC_VERSION: "23.0"
+
+jobs:
+  build-and-test:
+    name: Build & Test AL Extension
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup BcContainerHelper
+        shell: powershell
+        run: |
+          Install-Module BcContainerHelper -Force -AllowClobber
+          Import-Module BcContainerHelper
+
+      - name: Read app.json
+        id: app_info
+        shell: powershell
+        run: |
+          $appJson = Get-Content "app.json" | ConvertFrom-Json
+          echo "app_name=$($appJson.name)" >> $env:GITHUB_OUTPUT
+          echo "app_version=$($appJson.version)" >> $env:GITHUB_OUTPUT
+          echo "app_publisher=$($appJson.publisher)" >> $env:GITHUB_OUTPUT
+
+      - name: Compile AL Extension
+        shell: powershell
+        run: |
+          $appFile = Compile-AppInBcContainer `
+            -containerName "buildcontainer" `
+            -appProjectFolder $env:GITHUB_WORKSPACE `
+            -appOutputFolder "$env:GITHUB_WORKSPACE/.output" `
+            -credential (New-Object pscredential 'admin', (ConvertTo-SecureString 'Password123!' -AsPlainText -Force))
+          echo "APP_FILE=$appFile" >> $env:GITHUB_ENV
+
+      - name: Run Tests
+        shell: powershell
+        run: |
+          Run-TestsInBcContainer `
+            -containerName "buildcontainer" `
+            -credential (New-Object pscredential 'admin', (ConvertTo-SecureString 'Password123!' -AsPlainText -Force)) `
+            -testResultsFile "$env:GITHUB_WORKSPACE/TestResults.xml" `
+            -testResultsFormat XUnit
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults.xml
+
+      - name: Upload App Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.app_info.outputs.app_publisher }}_${{ steps.app_info.outputs.app_name }}_${{ steps.app_info.outputs.app_version }}
+          path: .output/*.app

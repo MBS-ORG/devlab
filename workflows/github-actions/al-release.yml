@@ -1,0 +1,63 @@
+name: AL Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release AL Extension
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Setup BcContainerHelper
+        shell: powershell
+        run: |
+          Install-Module BcContainerHelper -Force -AllowClobber
+          Import-Module BcContainerHelper
+
+      - name: Read app.json
+        id: app_info
+        shell: powershell
+        run: |
+          $appJson = Get-Content "app.json" | ConvertFrom-Json
+          echo "app_name=$($appJson.name)" >> $env:GITHUB_OUTPUT
+          echo "app_publisher=$($appJson.publisher)" >> $env:GITHUB_OUTPUT
+
+      - name: Compile AL Extension
+        shell: powershell
+        run: |
+          Compile-AppInBcContainer `
+            -containerName "releasecontainer" `
+            -appProjectFolder $env:GITHUB_WORKSPACE `
+            -appOutputFolder "$env:GITHUB_WORKSPACE/.output" `
+            -credential (New-Object pscredential 'admin', (ConvertTo-SecureString 'Password123!' -AsPlainText -Force))
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## AL Extension Release ${{ github.ref_name }}
+
+            ### Changes
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+
+            ### Installation
+            Download the `.app` file and install it in your Business Central environment.
+          files: .output/*.app
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}

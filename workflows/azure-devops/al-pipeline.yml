@@ -1,0 +1,113 @@
+trigger:
+  branches:
+    include:
+      - main
+      - master
+      - develop
+  paths:
+    include:
+      - "**.al"
+      - app.json
+
+pr:
+  branches:
+    include:
+      - main
+      - master
+
+variables:
+  BC_VERSION: "23.0"
+  vmImageName: "windows-latest"
+
+stages:
+  - stage: Build
+    displayName: Build & Test AL Extension
+    jobs:
+      - job: BuildTest
+        displayName: Compile and Run Tests
+        pool:
+          vmImage: $(vmImageName)
+
+        steps:
+          - checkout: self
+            fetchDepth: 0
+
+          - task: PowerShell@2
+            displayName: Setup BcContainerHelper
+            inputs:
+              targetType: inline
+              script: |
+                Install-Module BcContainerHelper -Force -AllowClobber
+                Import-Module BcContainerHelper
+
+          - task: PowerShell@2
+            displayName: Read app.json
+            inputs:
+              targetType: inline
+              script: |
+                $appJson = Get-Content "app.json" | ConvertFrom-Json
+                Write-Host "##vso[task.setvariable variable=AppName]$($appJson.name)"
+                Write-Host "##vso[task.setvariable variable=AppVersion]$($appJson.version)"
+                Write-Host "##vso[task.setvariable variable=AppPublisher]$($appJson.publisher)"
+
+          - task: PowerShell@2
+            displayName: Compile AL Extension
+            inputs:
+              targetType: inline
+              script: |
+                New-Item -ItemType Directory -Path "$(Build.ArtifactStagingDirectory)/.output" -Force
+                Compile-AppInBcContainer `
+                  -containerName "buildcontainer" `
+                  -appProjectFolder "$(Build.SourcesDirectory)" `
+                  -appOutputFolder "$(Build.ArtifactStagingDirectory)/.output" `
+                  -credential (New-Object pscredential 'admin', (ConvertTo-SecureString 'Password123!' -AsPlainText -Force))
+
+          - task: PowerShell@2
+            displayName: Run AL Tests
+            inputs:
+              targetType: inline
+              script: |
+                Run-TestsInBcContainer `
+                  -containerName "buildcontainer" `
+                  -credential (New-Object pscredential 'admin', (ConvertTo-SecureString 'Password123!' -AsPlainText -Force)) `
+                  -testResultsFile "$(Common.TestResultsDirectory)/TestResults.xml" `
+                  -testResultsFormat XUnit
+
+          - task: PublishTestResults@2
+            displayName: Publish Test Results
+            condition: always()
+            inputs:
+              testResultsFormat: XUnit
+              testResultsFiles: "$(Common.TestResultsDirectory)/TestResults.xml"
+              failTaskOnFailedTests: true
+
+          - task: PublishBuildArtifacts@1
+            displayName: Publish App Artifact
+            inputs:
+              pathToPublish: $(Build.ArtifactStagingDirectory)/.output
+              artifactName: ALApp
+
+  - stage: Release
+    displayName: Release
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: Deploy
+        displayName: Publish to Feed
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: ALApp
+
+                - task: UniversalPackages@0
+                  displayName: Publish to Azure Artifacts
+                  inputs:
+                    command: publish
+                    publishDirectory: $(Pipeline.Workspace)/ALApp
+                    vstsFeedPublish: $(System.TeamProject)/al-extensions
+                    vstsFeedPackagePublish: $(AppName)
+                    versionOption: custom
+                    versionPublish: $(AppVersion)
